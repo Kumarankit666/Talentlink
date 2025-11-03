@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import "./FreelancerDashboard.css";
 
@@ -22,12 +22,85 @@ function FreelancerDashboard() {
   const [showAcceptedPopup, setShowAcceptedPopup] = useState(false);
   const [status, setStatus] = useState("In Process");
 
+  /* =========================
+     NOTIFICATION STATE & REFS
+     ========================= */
+  // notifications list (history) - optional if you want to show multiple
+  const [notifications, setNotifications] = useState([]);
+  // currently visible notification (single popup)
+  const [activeNotification, setActiveNotification] = useState(null);
+  const [showNotification, setShowNotification] = useState(false);
+  // ref to previous snapshot of freelancerApplications to detect changes
+  const prevAppsRef = useRef([]);
+  // ref to notification DOM to detect outside clicks
+  const notifRef = useRef(null);
+
+  // play a short sound using WebAudio API
+  const playNotificationSound = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(880, ctx.currentTime); // A5
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.02);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      o.stop(ctx.currentTime + 0.36);
+    } catch (e) {
+      // fallback silent fail
+      console.warn("Audio not supported:", e);
+    }
+  };
+
+  // Helper: create a notification object and show it
+  const pushNotification = (title, message, type = "info") => {
+    const n = {
+      id: Date.now() + Math.random().toString(36).slice(2),
+      title,
+      message,
+      type, // "success" | "error" | "info"
+      time: new Date().toLocaleTimeString(),
+    };
+    setNotifications((prev) => [n, ...prev].slice(0, 10)); // keep up to 10
+    setActiveNotification(n);
+    setShowNotification(true);
+    playNotificationSound();
+  };
+
+  // Hide notification (manual close)
+  const hideNotification = () => {
+    setShowNotification(false);
+    setActiveNotification(null);
+  };
+
+  // Click anywhere except notification => hide it
+  useEffect(() => {
+    const handler = (e) => {
+      // if notif is visible and click is outside notifRef, hide
+      if (showNotification && notifRef.current && !notifRef.current.contains(e.target)) {
+        hideNotification();
+      }
+    };
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [showNotification]);
+
+  /* ===========
+     ORIGINAL LOGIC
+     =========== */
   useEffect(() => {
     const stored = JSON.parse(localStorage.getItem("clientProjects")) || [];
     setProjects(stored);
 
     const applied = JSON.parse(localStorage.getItem("freelancerApplications")) || [];
     setAppliedProjects(applied);
+
+    // Keep a snapshot for change detection (notifications)
+    prevAppsRef.current = applied;
   }, []);
 
   useEffect(() => {
@@ -172,8 +245,212 @@ function FreelancerDashboard() {
     navigate(`/chat?projectTitle=${encodeURIComponent(selectedProject.projectTitle)}&clientEmail=${encodeURIComponent(clientEmail)}`);
   };
 
+  /* =========================================
+     NOTIFICATION: detect localStorage changes
+     ========================================= */
+  useEffect(() => {
+    // we'll poll localStorage every 1000ms (coexists with your other interval)
+    const checker = setInterval(() => {
+      try {
+        const current = JSON.parse(localStorage.getItem("freelancerApplications")) || [];
+        const prev = prevAppsRef.current || [];
+
+        // build lookup maps by uniqueKey = projectTitle + '::' + email
+        const mapPrev = {};
+        prev.forEach((p) => {
+          const key = `${p.projectTitle}::${p.email}`;
+          mapPrev[key] = p;
+        });
+
+        const mapCurr = {};
+        current.forEach((c) => {
+          const key = `${c.projectTitle}::${c.email}`;
+          mapCurr[key] = c;
+        });
+
+        // check for changed entries
+        Object.keys(mapCurr).forEach((key) => {
+          const currApp = mapCurr[key];
+          const prevApp = mapPrev[key];
+
+          // if existed before -> detect changes
+          if (prevApp) {
+            // 1) status changed (Accepted / Rejected)
+            if (prevApp.status !== currApp.status) {
+              if (currApp.status === "Accepted") {
+                pushNotification(
+                  "Application Accepted",
+                  `Your application for "${currApp.projectTitle}" was accepted.`,
+                  "success"
+                );
+              } else if (currApp.status === "Rejected") {
+                pushNotification(
+                  "Application Rejected",
+                  `Your application for "${currApp.projectTitle}" was rejected.`,
+                  "error"
+                );
+              } else {
+                // other status changes
+                pushNotification(
+                  "Application Updated",
+                  `Status for "${currApp.projectTitle}" changed to ${currApp.status || "Updated"}.`,
+                  "info"
+                );
+              }
+            }
+
+            // 2) awaitingApproval changed -> freelancer proposed status -> (we ignore here)
+            // 3) approvedByClient or clientRejected flags
+            if (!prevApp.approvedByClient && currApp.approvedByClient) {
+              pushNotification(
+                "Proposal Approved",
+                `Client approved your proposed status for "${currApp.projectTitle}".`,
+                "success"
+              );
+            }
+            if (!prevApp.clientRejected && currApp.clientRejected) {
+              pushNotification(
+                "Proposal Rejected",
+                `Client rejected your proposed status for "${currApp.projectTitle}".`,
+                "error"
+              );
+            }
+          } else {
+            // new application for this freelancer (maybe created elsewhere)
+            // Show info notification when new item appears in freelancerApplications
+            pushNotification(
+              "New Application Recorded",
+              `An application for "${currApp.projectTitle}" was recorded.`,
+              "info"
+            );
+          }
+        });
+
+        // also detect removals (if needed)
+        Object.keys(mapPrev).forEach((key) => {
+          if (!mapCurr[key]) {
+            // removed application
+            // optional: no notification for removal to avoid noise
+          }
+        });
+
+        // update snapshot
+        prevAppsRef.current = current;
+      } catch (err) {
+        // ignore JSON parse errors
+        console.warn("Notification check error:", err);
+      }
+    }, 1000);
+
+    return () => clearInterval(checker);
+  }, []); // run once to setup checker
+
+  /* ============================
+     RENDER (original + added UI)
+     ============================ */
+
   return (
     <div className="container">
+      {/* -------------------------
+          NOTIFICATION POPUP (fixed)
+          ------------------------- */}
+      {showNotification && activeNotification && (
+        <div
+          ref={notifRef}
+          style={{
+            position: "fixed",
+            top: 18,
+            right: 18,
+            zIndex: 9999,
+            minWidth: 320,
+            maxWidth: 380,
+            backdropFilter: "blur(8px)",
+            background: "linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 14,
+            boxShadow: "0 10px 30px rgba(2,6,23,0.5)",
+            padding: "12px 14px",
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            color: "#030c17ff",
+            fontFamily: "Poppins, sans-serif",
+          }}
+          onClick={(e) => {
+            // stop propagation so document click handler doesn't immediately hide when clicking inside
+            e.stopPropagation();
+          }}
+        >
+          {/* Icon */}
+          <div style={{
+            width: 46,
+            height: 46,
+            borderRadius: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background:
+              activeNotification.type === "success" ? "rgba(16,185,129,0.12)" :
+              activeNotification.type === "error" ? "rgba(239,68,68,0.12)" :
+              "rgba(59,130,246,0.08)",
+            border: "1px solid rgba(255,255,255,0.03)"
+          }}>
+            <div style={{ fontSize: 20 }}>
+              {activeNotification.type === "success" ? "✅" :
+               activeNotification.type === "error" ? "❌" : "🔔"}
+            </div>
+          </div>
+
+          {/* Content */}
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <strong style={{ fontSize: 15 }}>{activeNotification.title}</strong>
+              <small style={{ color: "#020d18ff", fontSize: 12 }}>{activeNotification.time}</small>
+            </div>
+            <div style={{ marginTop: 6, fontSize: 13, color: "#030c14ff" }}>
+              {activeNotification.message}
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+              <button
+                onClick={() => {
+                  // open details: e.g., open applied list or popup for that project
+                  // We'll try to open applied list and highlight the project if possible
+                  setShowAppliedList(true);
+                  hideNotification();
+                }}
+                style={{
+                  border: "none",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "#01070dff",
+                  fontWeight: 600,
+                }}
+              >
+                View
+              </button>
+
+              <button
+                onClick={hideNotification}
+                style={{
+                  border: "none",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  background: "transparent",
+                  color: "#010914ff",
+                }}
+                aria-label="Close notification"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====== ORIGINAL UI START ====== */}
       <div className="sidebar">
         <div className="nav-item" onClick={() => navigate("/freelancer-dashboard")}>
           📊 Dashboard
@@ -424,7 +701,7 @@ function FreelancerDashboard() {
                 </p>
               )}
             </div>
-
+              
             <label style={{ fontWeight: "bold" }}>Project Status</label>
             <select
               value={status}

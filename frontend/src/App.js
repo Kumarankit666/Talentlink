@@ -7,7 +7,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 
-import { FaBell, FaEnvelope } from "react-icons/fa"; // Notification + Message icons
+import { FaEnvelope } from "react-icons/fa"; // Only message icon kept
 
 import RegisterPage from "./pages/RegisterPage";
 import LoginPage from "./pages/LoginPage";
@@ -22,12 +22,12 @@ import PostProject from "./pages/PostProject";
 import HomePage from "./pages/HomePage";
 import ProjectsSearchPage from "./pages/ProjectsSearchPage";
 import "./pages/Auth.css";
-import { AiOutlineMail } from "react-icons/ai"; // Outline mail icon
+import { AiOutlineMail } from "react-icons/ai";
 
-// ✅ NEW IMPORT for Chat Page
-import ChatPage from "./pages/ChatPage"; // <-- Added line
+// ✅ Chat Page import
+import ChatPage from "./pages/ChatPage";
 
-// ✅ Header Component
+// ✅ Header Component (without notifications)
 function HeaderBar({ theme, toggleTheme }) {
   const navigate = useNavigate();
   let user = {
@@ -92,26 +92,6 @@ function HeaderBar({ theme, toggleTheme }) {
 
       {/* Right Section */}
       <div style={{ display: "flex", alignItems: "center", gap: "15px", position: "relative" }}>
-        {/* Notification Icon */}
-        <div style={{ position: "relative", cursor: "pointer" }} onClick={() => alert("No new notifications!")}>
-          <FaBell size={24} color={theme === "dark" ? "#fff" : "#333"} />
-          <span
-            style={{
-              position: "absolute",
-              top: -5,
-              right: -5,
-              background: "red",
-              color: "white",
-              borderRadius: "50%",
-              padding: "2px 6px",
-              fontSize: "10px",
-              fontWeight: "bold",
-            }}
-          >
-            3
-          </span>
-        </div>
-
         {/* Message Icon */}
         <div style={{ position: "relative", cursor: "pointer" }} onClick={() => setMessageOpen(!messageOpen)}>
           <FaEnvelope size={24} color={theme === "dark" ? "#fff" : "#333"} />
@@ -154,7 +134,7 @@ function HeaderBar({ theme, toggleTheme }) {
                 <p style={{ padding: "5px 0", borderBottom: "1px solid #ccc" }}>Message 3</p>
               </div>
               <button
-                onClick={() => navigate("/chat")} // ✅ Go to chat page
+                onClick={() => navigate("/chat")}
                 style={{
                   marginTop: "5px",
                   width: "100%",
@@ -311,7 +291,7 @@ function App() {
           <Route path="/post-project" element={<PostProject />} />
           <Route path="/homepage" element={<HomePage />} />
 
-          {/* ✅ NEW CHAT ROUTE */}
+          {/* ✅ Chat Page */}
           <Route path="/chat" element={<ChatPage />} />
         </Routes>
       </Layout>
